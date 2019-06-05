@@ -22,7 +22,7 @@ import (
 
 	"github.com/ghodss/yaml"
 
-	"k8s.io/api/apps/v1beta1"
+	"k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -88,7 +88,7 @@ func main() {
 	}
 
 	// Watch uninitialized Deployments in all namespaces.
-	restClient := clientset.AppsV1beta1().RESTClient()
+	restClient := clientset.AppsV1().RESTClient()
 	watchlist := cache.NewListWatchFromClient(restClient, "deployments", corev1.NamespaceAll, fields.Everything())
 
 	// Wrap the returned watchlist to workaround the inability to include
@@ -106,10 +106,10 @@ func main() {
 
 	resyncPeriod := 30 * time.Second
 
-	_, controller := cache.NewInformer(includeUninitializedWatchlist, &v1beta1.Deployment{}, resyncPeriod,
+	_, controller := cache.NewInformer(includeUninitializedWatchlist, &v1.Deployment{}, resyncPeriod,
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				err := initializeDeployment(obj.(*v1beta1.Deployment), c, clientset)
+				err := initializeDeployment(obj.(*v1.Deployment), c, clientset)
 				if err != nil {
 					log.Println(err)
 				}
@@ -128,18 +128,14 @@ func main() {
 	close(stop)
 }
 
-func initializeDeployment(deployment *v1beta1.Deployment, c *config, clientset *kubernetes.Clientset) error {
+func initializeDeployment(deployment *v1.Deployment, c *config, clientset *kubernetes.Clientset) error {
 	if deployment.ObjectMeta.GetInitializers() != nil {
 		pendingInitializers := deployment.ObjectMeta.GetInitializers().Pending
 
 		if initializerName == pendingInitializers[0].Name {
 			log.Printf("Initializing deployment: %s", deployment.Name)
 
-			o, err := runtime.NewScheme().DeepCopy(deployment)
-			if err != nil {
-				return err
-			}
-			initializedDeployment := o.(*v1beta1.Deployment)
+			initializedDeployment := deployment.DeepCopy()
 
 			// Remove self from the list of pending Initializers while preserving ordering.
 			if len(pendingInitializers) == 1 {
@@ -153,7 +149,7 @@ func initializeDeployment(deployment *v1beta1.Deployment, c *config, clientset *
 				_, ok := a[annotation]
 				if !ok {
 					log.Printf("Required '%s' annotation missing; skipping envoy container injection", annotation)
-					_, err = clientset.AppsV1beta1().Deployments(deployment.Namespace).Update(initializedDeployment)
+					_, err := clientset.AppsV1().Deployments(deployment.Namespace).Update(initializedDeployment)
 					if err != nil {
 						return err
 					}
@@ -176,12 +172,12 @@ func initializeDeployment(deployment *v1beta1.Deployment, c *config, clientset *
 				return err
 			}
 
-			patchBytes, err := strategicpatch.CreateTwoWayMergePatch(oldData, newData, v1beta1.Deployment{})
+			patchBytes, err := strategicpatch.CreateTwoWayMergePatch(oldData, newData, v1.Deployment{})
 			if err != nil {
 				return err
 			}
 
-			_, err = clientset.AppsV1beta1().Deployments(deployment.Namespace).Patch(deployment.Name, types.StrategicMergePatchType, patchBytes)
+			_, err = clientset.AppsV1().Deployments(deployment.Namespace).Patch(deployment.Name, types.StrategicMergePatchType, patchBytes)
 			if err != nil {
 				return err
 			}
